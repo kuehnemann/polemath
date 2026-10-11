@@ -116,13 +116,29 @@ export function analyzeVideo(video, onProgress, rate = 2) {
       video.pause();
       video.playbackRate = 1;
       video.currentTime = 0;
-      resolve({ samples, duration: video.duration });
+      if (!samples.length) return reject(new Error('Keine Bilder gelesen'));
+      resolve({ samples, duration: video.duration, aspect: video.videoHeight / video.videoWidth });
     };
     video.addEventListener('ended', finish, { once: true });
     video.muted = true;
     video.playbackRate = rate;
     video.currentTime = 0;
-    video.play().then(() => loop()).catch(reject);
+    // Watchdog: kommt nach dem Start kein Bild, abbrechen und per Fingertipp neu starten
+    const watchdog = setInterval(() => {
+      if (done) return clearInterval(watchdog);
+      if (prevT === null && performance.now() - started > 5000) {
+        clearInterval(watchdog);
+        done = true;
+        video.pause();
+        video.playbackRate = 1;
+        reject(new Error('Video startet nicht automatisch'));
+      }
+    }, 500);
+    const started = performance.now();
+    const p = video.play();
+    (p && p.then ? p : Promise.resolve()).then(() => loop()).catch(err => {
+      done = true; clearInterval(watchdog); reject(err);
+    });
   });
 }
 
@@ -185,7 +201,7 @@ function resample(samples, key, n) {                  // unregelmäßige Samples
   return out;
 }
 
-export function buildMotion({ samples, duration }, spinSpeed = 0.5) {
+export function buildMotion({ samples, duration, aspect = 16 / 9 }, spinSpeed = 0.5) {
   const n = Math.max(2, Math.floor(duration * FPS));
   if (samples.length < 2) samples = [{ t: 0, ...EMPTY }, { t: duration, ...EMPTY }];
   const raw = {};
@@ -211,6 +227,13 @@ export function buildMotion({ samples, duration }, spinSpeed = 0.5) {
   const jerk = raw.energy.map((v, i) => Math.abs(v - raw.energy[Math.max(0, i - 1)]));
   m.chaos = norm01(s(jerk, 0.3));
   m.inverted = new Float64Array(n);                    // ohne Pose-Erkennung immer 0
+  m.dir = dir;
+  m.px = s(raw.cx, 0.1); m.py = s(raw.cy, 0.1);        // Schwerpunktsbahn für die Epizykel
+  m.aspect = aspect;
+  const dev = [];
+  const tx = s(raw.cx, 1.5), ty = s(raw.cy, 1.5);
+  for (let i = 0; i < n; i++) dev.push(Math.hypot(m.px[i] - tx[i], (m.py[i] - ty[i]) * aspect));
+  m.pscale = percentile(dev, 95) + 1e-6;
   return m;
 }
 
@@ -221,7 +244,9 @@ export function chooseConstruct(m) {
   const mean = e.reduce((a, v) => a + v, 0) / e.length;
   const sd = Math.sqrt(e.reduce((a, v) => a + (v - mean) ** 2, 0) / e.length);
   const cv = sd / (mean + 1e-9);
+  // Anteil des Clips mit klar periodischer Drehung (Hilbert-Vertrauen > 0,5)
+  const share = m.fourier ? m.fourier.weight.reduce((a, w) => a + (w > 0.5), 0) / m.n : 0;
   // Schwellen grob kalibriert (Block-Matching schätzt Drehung schwächer als Farnebäck)
-  const kind = rot > 0.25 ? 'knot' : cv > 0.5 ? 'lorenz' : 'harmonic';
-  return { kind, rot, cv };
+  const kind = share > 0.5 ? 'dna' : rot > 0.25 ? 'knot' : cv > 0.5 ? 'lorenz' : 'harmonic';
+  return { kind, rot, cv, share };
 }

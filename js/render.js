@@ -1,5 +1,6 @@
 // Projektion, Linien mit Glow, Komposition des 1080×1920-Frames.
-import { curve, GREY, CYAN } from './constructs.js';
+import { curve, GREY, CYAN } from './constructs.js?v=3';
+import { SPEC_FMAX } from './fourier.js?v=3';
 
 export const OUT_W = 1080, OUT_H = 1920, VIDEO_H = 1080;
 export const LAYOUTS = {
@@ -29,7 +30,7 @@ export class ArtRenderer {
     });
   }
 
-  draw(curves, yaw, pitch, step = 6) {
+  draw(curves, yaw, pitch, step = 6, showPole = true) {
     const ctx = this.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
@@ -39,7 +40,7 @@ export class ArtRenderer {
     ctx.globalCompositeOperation = 'lighter';
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     const pole = curve([[0, 0, -1.5], [0, 0, 1.5]], GREY, GREY, 3, 0.6);
-    for (const c of [pole, ...curves]) {
+    for (const c of showPole ? [pole, ...curves] : curves) {
       const uv = this.project(c.pts, yaw, pitch), n = uv.length;
       ctx.lineWidth = c.width;
       for (let s = 0; s < n - 1; s += step) {
@@ -89,8 +90,9 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
 }
 
-// Statische Textebene: Credit, Name, Formel, Zuordnung, Bewegungskurve
-export function buildTextLayer(construct, credit, layoutKey, energy, scale) {
+// Statische Textebene: Credit, Name, Formel, Zuordnung und Analyse-Zeile
+// (Bewegungsenergie oder Fourier-Spektrogramm)
+export function buildTextLayer(construct, credit, layoutKey, m, scale, info = 'energy') {
   const L = LAYOUTS[layoutKey];
   const c = canvas(Math.round(OUT_W * scale), Math.round(OUT_H * scale)), ctx = c.getContext('2d');
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
@@ -108,17 +110,46 @@ export function buildTextLayer(construct, credit, layoutKey, energy, scale) {
   ctx.fillStyle = 'rgb(225,225,235)'; ctx.font = `400 27px ${FONT}`; ctx.fillText(construct.formula, 48, yT + 70, OUT_W - 96);
   ctx.fillStyle = 'rgb(170,170,185)'; ctx.font = `400 25px ${FONT}`; ctx.fillText(construct.mapping, 48, yT + 120, OUT_W - 96);
 
-  const pts = curvePoints(energy, L.curveY);
+  if (info === 'fourier' && m.fourier) return { canvas: c, ...drawSpectrogram(ctx, m.fourier, layoutKey) };
+
+  const pts = curvePoints(m.energy, L.curveY);
   ctx.strokeStyle = 'rgba(255,255,255,0.43)'; ctx.lineWidth = 2;
   ctx.beginPath(); pts.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke();
   ctx.fillStyle = 'rgba(170,170,185,0.8)'; ctx.font = `400 20px ${FONT}`; ctx.fillText('Bewegungsenergie', 48, L.curveY - 6);
-  return { canvas: c, pts };
+  return { canvas: c, mode: 'energy', pts };
 }
 
 function curvePoints(energy, y0) {
   const n = energy.length, step = Math.max(1, Math.floor(n / 600)), pts = [];
   for (let i = 0; i < n; i += step) pts.push([48 + (OUT_W - 96) * i / (n - 1), y0 + 50 - energy[i] * 46]);
   return pts;
+}
+
+function heat(v) {                                    // schwarz → magenta → cyan → weiß
+  const stops = [[0, [0, 0, 0]], [0.4, [190, 40, 160]], [0.75, [60, 210, 255]], [1, [255, 255, 255]]];
+  for (let k = 1; k < stops.length; k++) {
+    const [t1, c1] = stops[k], [t0, c0] = stops[k - 1];
+    if (v <= t1) { const f = (v - t0) / (t1 - t0); return c0.map((x, j) => x + (c1[j] - x) * f); }
+  }
+  return stops[stops.length - 1][1];
+}
+
+function drawSpectrogram(ctx, F, layoutKey) {
+  // Geteilt: über dem unteren Videorand, damit das Konstrukt frei bleibt; Overlay: über dem Text
+  const y = layoutKey === 'split' ? VIDEO_H - 92 : OUT_H - 322, h = 64, x = 48, w = OUT_W - 96;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, y - 36, OUT_W, h + 50);
+  const img = canvas(F.cols, F.bins), ic = img.getContext('2d'), data = ic.createImageData(F.cols, F.bins);
+  for (let col = 0; col < F.cols; col++) for (let k = 0; k < F.bins; k++) {
+    const [r, g, b] = heat(F.spec[col * F.bins + k]), o = ((F.bins - 1 - k) * F.cols + col) * 4;
+    data.data[o] = r; data.data[o + 1] = g; data.data[o + 2] = b; data.data[o + 3] = 255;
+  }
+  ic.putImageData(data, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(img, x, y, w, h);
+  ctx.fillStyle = 'rgba(170,170,185,0.9)'; ctx.font = `400 20px ${FONT}`;
+  ctx.fillText(`Fourier-Spektrogramm der Drehbewegung · 0–${SPEC_FMAX.toString().replace('.', ',')} Hz`, x, y - 28);
+  return { mode: 'fourier', strip: { x, y, w, h } };
 }
 
 function drawCover(ctx, video, x, y, tw, th, fx, fy) {
@@ -151,7 +182,18 @@ export function composeFrame(ctx, scale, video, art, text, m, i, layoutKey) {
     ctx.strokeStyle = 'rgb(70,60,60)'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(0, VIDEO_H); ctx.lineTo(OUT_W, VIDEO_H); ctx.stroke();
   }
-  const k = Math.min(text.pts.length - 1, Math.round(i / (m.n - 1) * (text.pts.length - 1)));
   ctx.fillStyle = `rgb(${CYAN.join(',')})`;
+  if (text.mode === 'fourier') {
+    const { x, y, w, h } = text.strip, F = m.fourier, px = x + w * i / Math.max(1, m.n - 1);
+    ctx.fillRect(px - 1.5, y - 4, 3, h + 8);
+    const f = F.f0[i], ok = F.conf[i] > 0.25;
+    const fy = y + h - h * Math.min(1, f / SPEC_FMAX);
+    if (ok) { ctx.beginPath(); ctx.arc(px, fy, 6, 0, Math.PI * 2); ctx.fill(); }
+    ctx.font = `600 22px ${FONT}`; ctx.textAlign = 'right'; ctx.textBaseline = 'top';
+    ctx.fillText(ok ? `f₀ = ${f.toFixed(2).replace('.', ',')} Hz ≈ ${Math.round(f * 60)} U/min` : 'f₀ –', x + w, y - 30);
+    ctx.textAlign = 'left';
+    return;
+  }
+  const k = Math.min(text.pts.length - 1, Math.round(i / (m.n - 1) * (text.pts.length - 1)));
   ctx.beginPath(); ctx.arc(text.pts[k][0], text.pts[k][1], 7, 0, Math.PI * 2); ctx.fill();
 }

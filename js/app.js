@@ -1,11 +1,12 @@
-import { analyzeVideo, buildMotion, chooseConstruct, FPS } from './analysis.js';
-import { CONSTRUCTS } from './constructs.js';
-import { ArtRenderer, buildTextLayer, composeFrame, LAYOUTS, OUT_W, OUT_H } from './render.js';
+import { analyzeVideo, buildMotion, chooseConstruct, FPS } from './analysis.js?v=3';
+import { fourierAnalysis } from './fourier.js?v=3';
+import { CONSTRUCTS } from './constructs.js?v=3';
+import { ArtRenderer, buildTextLayer, composeFrame, LAYOUTS, OUT_W, OUT_H } from './render.js?v=3';
 
 const $ = (s) => document.querySelector(s);
 const ui = {
   file: $('#file'), video: $('#src'), canvas: $('#stage'), empty: $('#empty'),
-  construct: $('#construct'), layout: $('#layout'), credit: $('#credit'), quality: $('#quality'), spin: $('#spin'),
+  construct: $('#construct'), layout: $('#layout'), info: $('#info'), credit: $('#credit'), quality: $('#quality'), spin: $('#spin'),
   scrub: $('#scrub'), play: $('#play'), export: $('#export'), status: $('#status'), bar: $('#bar'),
   analyze: $('#analyze'), result: $('#result'), resultVideo: $('#resultVideo'), save: $('#save'),
   download: $('#download'), caption: $('#caption'), copy: $('#copy'), autoInfo: $('#autoInfo'),
@@ -22,7 +23,7 @@ function setStatus(msg, progress = null) {
 }
 
 function setBusy(busy) {
-  for (const el of [ui.construct, ui.layout, ui.credit, ui.quality, ui.spin, ui.scrub, ui.play, ui.export, ui.file])
+  for (const el of [ui.construct, ui.layout, ui.info, ui.credit, ui.quality, ui.spin, ui.scrub, ui.play, ui.export, ui.file])
     el.disabled = busy;
 }
 
@@ -34,14 +35,34 @@ ui.file.addEventListener('change', async () => {
   if (!f) return;
   stopPlayback();
   ui.result.hidden = true;
+  ui.analyze.hidden = true;
   state.motion = null;
-  ui.video.src = URL.createObjectURL(f);
-  await new Promise((res, rej) => { ui.video.onloadeddata = res; ui.video.onerror = () => rej(new Error('Video kann nicht gelesen werden')); })
-    .catch(e => setStatus(e.message));
-  if (!ui.video.videoWidth) return;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, ui.canvas.width, ui.canvas.height);     // Video darunter wird sichtbar
   ui.empty.hidden = true;
+  setStatus('Video wird geladen …');
+  if (ui.video.src) URL.revokeObjectURL(ui.video.src);
+  ui.video.src = URL.createObjectURL(f);
+  ui.video.load();
+  try {
+    await waitForMetadata(ui.video, 15000);
+  } catch (e) {
+    setStatus(e.message);
+    ui.empty.hidden = false;
+    return;
+  }
   runAnalysis();
 });
+
+// iOS lädt vor dem Abspielen oft nur die Metadaten (kein „loadeddata“) → nur darauf warten
+function waitForMetadata(video, timeout) {
+  return new Promise((resolve, reject) => {
+    if (video.readyState >= 1 && video.videoWidth) return resolve();
+    const t = setTimeout(() => reject(new Error('Video lädt nicht. Anderes Format probieren oder Seite neu laden.')), timeout);
+    video.addEventListener('loadedmetadata', () => { clearTimeout(t); resolve(); }, { once: true });
+    video.addEventListener('error', () => { clearTimeout(t); reject(new Error('Dieses Video kann der Browser nicht lesen.')); }, { once: true });
+  });
+}
 
 ui.analyze.addEventListener('click', () => { ui.analyze.hidden = true; runAnalysis(); });
 
@@ -52,7 +73,7 @@ async function runAnalysis() {
     state.analysis = await analyzeVideo(ui.video, p => setStatus('Bewegung wird analysiert …', p));
   } catch (e) {
     // iOS kann Autoplay blockieren (z. B. im Stromsparmodus) → per Fingertipp starten
-    setStatus('Tippe auf „Analyse starten“.');
+    setStatus(`Tippe auf „Analyse starten“. (${e.message})`, null);
     ui.analyze.hidden = false;
     ui.file.disabled = false;
     return;
@@ -64,8 +85,11 @@ async function runAnalysis() {
 
 function rebuildMotion() {
   state.motion = buildMotion(state.analysis, Number(ui.spin.value));
-  const auto = chooseConstruct(state.motion);
-  ui.autoInfo.textContent = `Automatisch: ${CONSTRUCTS[auto.kind].label} (Drehung ${auto.rot.toFixed(2)} rad/s, Schwankung ${auto.cv.toFixed(2)})`;
+  state.motion.fourier = fourierAnalysis(state.motion);
+  state.motion.rotPhase = state.motion.fourier.rotPhase;
+  const auto = chooseConstruct(state.motion), F = state.motion.fourier;
+  ui.autoInfo.textContent = `Automatisch: ${CONSTRUCTS[auto.kind].label} · Drehfrequenz ${F.fGlobal.toFixed(2)} Hz ` +
+    `(Drehanteil ${(auto.share * 100).toFixed(0)} %), Drehung ${auto.rot.toFixed(2)} rad/s, Schwankung ${auto.cv.toFixed(2)}`;
   state.autoKind = auto.kind;
   ui.scrub.max = state.motion.n - 1;
   rebuildScene();
@@ -80,7 +104,7 @@ function rebuildScene() {
   state.construct = new CONSTRUCTS[state.kind](state.motion);
   const L = LAYOUTS[ui.layout.value];
   state.art = new ArtRenderer(OUT_W, L.panelH, L.reserve, state.scale);
-  state.text = buildTextLayer(state.construct, ui.credit.value.trim() || '@bendygio', ui.layout.value, state.motion.energy, state.scale);
+  state.text = buildTextLayer(state.construct, ui.credit.value.trim() || '@bendygio', ui.layout.value, state.motion, state.scale, ui.info.value);
   ui.caption.value = captionText();
   renderFrame();
 }
@@ -88,18 +112,21 @@ function rebuildScene() {
 function renderFrame() {
   if (!state.motion) return;
   const i = frameIndex();
-  state.art.draw(state.construct.curves(i), ...state.construct.camera(i));
+  state.art.draw(state.construct.curves(i), ...state.construct.camera(i), 6, state.construct.pole !== false);
   composeFrame(ctx, state.scale, ui.video, state.art, state.text, state.motion, i, ui.layout.value);
   if (!state.exporting) ui.scrub.value = i;
 }
 
 function captionText() {
   const c = state.construct, credit = ui.credit.value.trim() || '@bendygio';
-  return `${c.name}: ${c.formula}\n\nBewegung: ${credit} (geteilt mit ihrer Erlaubnis)\n${c.mapping}\n\n` +
-         '#poledance #mathart #generativeart #parametric #3d #mathematics';
+  const F = state.motion.fourier;
+  const fLine = F && F.shareGlobal > 0.2
+    ? `Dominante Drehfrequenz (Fourier): ${F.fGlobal.toFixed(2).replace('.', ',')} Hz ≈ ${Math.round(F.fGlobal * 60)} Umdrehungen/min\n` : '';
+  return `${c.name}: ${c.formula}\n\nBewegung: ${credit} (geteilt mit ihrer Erlaubnis)\n${c.mapping}\n${fLine}\n` +
+         '#poledance #mathart #generativeart #parametric #3d #mathematics #fourier #physics';
 }
 
-for (const el of [ui.construct, ui.layout, ui.quality]) el.addEventListener('change', rebuildScene);
+for (const el of [ui.construct, ui.layout, ui.info, ui.quality]) el.addEventListener('change', rebuildScene);
 ui.credit.addEventListener('input', rebuildScene);
 ui.spin.addEventListener('change', () => state.analysis && rebuildMotion());
 
@@ -229,3 +256,7 @@ ui.copy.addEventListener('click', async () => {
 
 setBusy(true);
 ui.file.disabled = false;
+
+// Fehler sichtbar machen statt still zu hängen
+window.addEventListener('error', e => setStatus('Fehler: ' + e.message));
+window.addEventListener('unhandledrejection', e => setStatus('Fehler: ' + (e.reason && e.reason.message || e.reason)));
