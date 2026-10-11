@@ -13,7 +13,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
   <header>
@@ -23,6 +23,7 @@
 
   <main>
     <section class="stage-wrap">
+      <video id="src" playsinline muted preload="auto"></video>
       <canvas id="stage" width="1080" height="1920"></canvas>
       <label id="empty" class="empty" for="file">
         <span class="plus">＋</span>
@@ -49,6 +50,8 @@
           <option value="knot">Torusknoten</option>
           <option value="lorenz">Lorenz-Attraktor</option>
           <option value="harmonic">Kugelflächenwelle</option>
+          <option value="dna">DNA-Doppelhelix</option>
+          <option value="fourier">Fourier-Epizykel</option>
         </select>
       </label>
       <p id="autoInfo" class="hint"></p>
@@ -56,6 +59,12 @@
         <select id="layout">
           <option value="split">Geteilt (Video oben)</option>
           <option value="overlay">Overlay</option>
+        </select>
+      </label>
+      <label class="field">Analyse-Zeile
+        <select id="info">
+          <option value="fourier">Fourier-Spektrogramm mit Drehfrequenz</option>
+          <option value="energy">Bewegungsenergie</option>
         </select>
       </label>
       <label class="field">Credit
@@ -93,7 +102,6 @@
     </footer>
   </main>
 
-  <video id="src" playsinline muted preload="auto"></video>
-  <script type="module" src="js/app.js"></script>
+  <script type="module" src="js/app.js?v=3"></script>
 </body>
 </html>
