@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>polemath</title>
+  <meta name="description" content="Pole-Dance-Clips mit bewegungsgesteuerten 3D-Mathe-Konstrukten als Instagram-Reel">
+  <meta name="theme-color" content="#08070c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="polemath">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>pole<span>math</span></h1>
+    <p>Bewegung → Mathematik → Reel</p>
+  </header>
+
+  <main>
+    <section class="stage-wrap">
+      <canvas id="stage" width="1080" height="1920"></canvas>
+      <label id="empty" class="empty" for="file">
+        <span class="plus">＋</span>
+        <span>Video wählen</span>
+        <small>Hochformat, am besten die Originaldatei</small>
+      </label>
+    </section>
+
+    <div class="progress" hidden><div id="bar"></div></div>
+    <p id="status" class="status">Wähle einen Clip aus Fotos oder Dateien.</p>
+    <button id="analyze" class="primary" hidden>Analyse starten</button>
+
+    <input id="scrub" type="range" min="0" max="1" value="0" step="1" aria-label="Zeit">
+
+    <div class="actions">
+      <button id="play">▶ Vorschau</button>
+      <button id="export" class="primary">Reel exportieren</button>
+    </div>
+
+    <section class="controls">
+      <label class="field">Konstrukt
+        <select id="construct">
+          <option value="auto">Automatisch</option>
+          <option value="knot">Torusknoten</option>
+          <option value="lorenz">Lorenz-Attraktor</option>
+          <option value="harmonic">Kugelflächenwelle</option>
+        </select>
+      </label>
+      <p id="autoInfo" class="hint"></p>
+      <label class="field">Layout
+        <select id="layout">
+          <option value="split">Geteilt (Video oben)</option>
+          <option value="overlay">Overlay</option>
+        </select>
+      </label>
+      <label class="field">Credit
+        <input id="credit" type="text" value="@bendygio" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </label>
+      <label class="field">Drehtempo
+        <input id="spin" type="range" min="0.2" max="1.2" step="0.1" value="0.5">
+      </label>
+      <label class="field">Qualität
+        <select id="quality">
+          <option value="1">1080 × 1920</option>
+          <option value="0.6667">720 × 1280 (schneller)</option>
+        </select>
+      </label>
+      <label class="file-btn" for="file">Anderes Video wählen</label>
+      <input id="file" type="file" accept="video/*" hidden>
+    </section>
+
+    <section id="result" class="result" hidden>
+      <h2>Dein Reel</h2>
+      <video id="resultVideo" controls playsinline></video>
+      <div class="actions">
+        <button id="save" class="primary">In Fotos sichern / Teilen</button>
+        <a id="download" class="button" href="#">Herunterladen</a>
+      </div>
+      <label class="field">Bildunterschrift
+        <textarea id="caption" rows="7"></textarea>
+      </label>
+      <button id="copy">Text kopieren</button>
+    </section>
+
+    <footer>
+      <p>Alles läuft auf deinem Gerät. Videos werden nirgendwo hochgeladen.</p>
+      <p>Teile nur Clips, für die du die Erlaubnis der Tänzerin hast, und nenne sie im Post.</p>
+    </footer>
+  </main>
+
+  <video id="src" playsinline muted preload="auto"></video>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
